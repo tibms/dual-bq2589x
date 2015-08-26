@@ -921,7 +921,6 @@ static ssize_t bq2589x_show_registers(struct device *dev,
 {
 	u8 addr;
 	u8 val;
-	u8 tmpbuf[300];
 	int len;
 	int idx = 0;
 	int ret ;
@@ -930,8 +929,7 @@ static ssize_t bq2589x_show_registers(struct device *dev,
 	for (addr = 0x0; addr <= 0x14; addr++) {
 		ret = bq2589x_read_byte(g_bq1, &val, addr);
 		if (ret == 0) {
-			len = snprintf(tmpbuf, PAGE_SIZE - idx, "Reg[0x%.2x] = 0x%.2x\n", addr, val);
-			memcpy(&buf[idx], tmpbuf, len);
+			len = snprintf(&buf[idx], PAGE_SIZE - idx, "Reg[0x%.2x] = 0x%.2x\n", addr, val);
 			idx += len;
 		}
 	}
@@ -940,8 +938,7 @@ static ssize_t bq2589x_show_registers(struct device *dev,
 	for (addr = 0x0; addr <= 0x14; addr++) {
 		ret = bq2589x_read_byte(g_bq2, &val, addr);
 		if (ret == 0) {
-			len = snprintf(tmpbuf, PAGE_SIZE - idx, "Reg[0x%.2x] = 0x%.2x\n", addr, val);
-			memcpy(&buf[idx], tmpbuf, len);
+			len = snprintf(&buf[idx], PAGE_SIZE - idx, "Reg[0x%.2x] = 0x%.2x\n", addr, val);
 			idx += len;
 		}
 	}
@@ -1068,7 +1065,7 @@ static void bq2589x_adapter_out_workfunc(struct work_struct *work)
 
 	bq2589x_set_input_volt_limit(g_bq1, 4400);
 	bq2589x_set_input_volt_limit(g_bq2, 4400);
-
+	
 	cancel_delayed_work_sync(&bq->monitor_work);
 
 }
@@ -1280,14 +1277,15 @@ static void bq2589x_charger1_irq_workfunc(struct work_struct *work)
 	if (ret)
 		return;
 
-	if ((((status & BQ2589X_VBUS_STAT_MASK) == 0) || ((status & BQ2589X_VBUS_STAT_MASK) == BQ2589X_VBUS_OTG))&& (bq->status & BQ2589X_STATUS_PLUGIN)) {
+	bq->vbus_type = (status & BQ2589X_VBUS_STAT_MASK) >> BQ2589X_VBUS_STAT_SHIFT;
+
+	if ((bq->vbus_type == BQ2589X_VBUS_NONE || bq->vbus_type  == BQ2589X_VBUS_OTG) && (bq->status & BQ2589X_STATUS_PLUGIN)) {
 		dev_info(bq->dev, "%s:adapter removed\n", __func__);
 		bq->status &= ~BQ2589X_STATUS_PLUGIN;
 		schedule_work(&bq->adapter_out_work);
-	} else if ((status & BQ2589X_VBUS_STAT_MASK) != 0 && ((status & BQ2589X_VBUS_STAT_MASK) != BQ2589X_VBUS_OTG) && !(bq->status & BQ2589X_STATUS_PLUGIN)) {
+	} else if (bq->vbus_type != BQ2589X_VBUS_NONE && bq->vbus_type != BQ2589X_VBUS_OTG && !(bq->status & BQ2589X_STATUS_PLUGIN)) {
 		dev_info(bq->dev, "%s:adapter plugged in\n", __func__);
 		bq->status |= BQ2589X_STATUS_PLUGIN;
-		bq->vbus_type = (status & BQ2589X_VBUS_STAT_MASK) >> BQ2589X_VBUS_STAT_SHIFT;
 		schedule_work(&bq->adapter_in_work);
 	}
 
@@ -1323,7 +1321,7 @@ static int bq2589x_charger1_probe(struct i2c_client *client,
 
 	int ret;
 
-	bq = kzalloc(sizeof(struct bq2589x), GFP_KERNEL);
+	bq = devm_kzalloc(&client->dev, sizeof(struct bq2589x), GFP_KERNEL);
 	if (!bq) {
 		dev_err(&client->dev, "%s: out of memory\n", __func__);
 		return -ENOMEM;
@@ -1334,18 +1332,11 @@ static int bq2589x_charger1_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, bq);
 
 	ret = bq2589x_detect_device(bq);
-	if (ret == 0) {
-		if (bq->part_no == BQ25890) {
-			bq->status |= BQ2589X_STATUS_EXIST;
-			dev_info(bq->dev, "%s: charger device bq25890 detected, revision:%d\n", __func__, bq->revision);
-		} else {
-			dev_err(bq->dev, "%s: unexpected charger device detected\n", __func__);
-			kfree(bq);
-			return -ENODEV;
-		}
+	if (!ret && bq->part_no == BQ25890) {
+		bq->status |= BQ2589X_STATUS_EXIST;
+		dev_info(bq->dev, "%s: charger device bq25890 detected, revision:%d\n", __func__, bq->revision);
 	} else {
 		dev_info(bq->dev, "%s: no bq25890 charger device found:%d\n", __func__, ret);
-		kfree(bq);
 		return -ENODEV;
 	}
 
@@ -1423,7 +1414,6 @@ err_irq:
 err_1:
 	gpio_free(GPIO_IRQ);
 err_0:
-	kfree(bq);
 	g_bq1 = NULL;
 	return ret;
 }
@@ -1449,7 +1439,6 @@ static void bq2589x_charger1_shutdown(struct i2c_client *client)
 	free_irq(bq->client->irq, NULL);
 	gpio_free(GPIO_IRQ);
 
-	kfree(bq);
 	g_bq1 = NULL;
 }
 
@@ -1507,7 +1496,7 @@ static int bq2589x_charger2_probe(struct i2c_client *client,
 
 	int ret;
 
-	bq = kzalloc(sizeof(struct bq2589x), GFP_KERNEL);
+	bq = devm_kzalloc(&client->dev, sizeof(struct bq2589x), GFP_KERNEL);
 	if (!bq) {
 		dev_err(&client->dev, "%s: out of memory\n", __func__);
 		return -ENOMEM;
@@ -1518,18 +1507,11 @@ static int bq2589x_charger2_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, bq);
 
 	ret = bq2589x_detect_device(bq);
-	if (ret == 0) {
-		if (bq->part_no == BQ25892) {
-			bq->status |= BQ2589X_STATUS_EXIST;
-			dev_info(bq->dev, "%s: charger device bq25892 detected, revision:%d\n", __func__, bq->revision);
-		} else {
-			dev_err(bq->dev, "%s: unexpected charger device detected\n", __func__);
-			kfree(bq);
-			return -ENODEV;
-		}
+	if (!ret && bq->part_no == BQ25892) {
+		bq->status |= BQ2589X_STATUS_EXIST;
+		dev_info(bq->dev, "%s: charger device bq25892 detected, revision:%d\n", __func__, bq->revision);
 	} else {
 		dev_info(bq->dev, "%s: no charger device bq25892 found:%d\n", __func__, ret);
-		kfree(bq);
 		return -ENODEV;
 	}
 
@@ -1553,7 +1535,6 @@ static void bq2589x_charger2_shutdown(struct i2c_client *client)
 
 	dev_info(bq->dev, "%s: shutdown\n", __func__);
 	cancel_work_sync(&bq->irq_work);
-	kfree(bq);
 	g_bq2 = NULL;
 }
 
