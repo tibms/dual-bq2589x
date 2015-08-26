@@ -752,7 +752,7 @@ static int bq2589x_init_device(struct bq2589x *bq)
 	if (bq == g_bq1) {/* charger 1 specific initialization*/
 		bq2589x_adc_start(bq, false);
 
-		ret = bq2589x_set_term_current(bq, 384);
+		ret = bq2589x_set_term_current(bq, 256);
 		if (ret < 0) {
 			dev_err(bq->dev, "%s:Failed to set termination current:%d\n", __func__, ret);
 			return ret;
@@ -773,7 +773,7 @@ static int bq2589x_init_device(struct bq2589x *bq)
 		bq2589x_set_watchdog_timer(bq, 160);
 
 	} else if (bq == g_bq2) {/*charger2 specific initialization*/
-		ret = bq2589x_set_term_current(bq, 256);
+		ret = bq2589x_set_term_current(bq, 512);
 		if (ret < 0) {
 			dev_err(bq->dev, "%s:Failed to set termination current:%d\n", __func__, ret);
 			return ret;
