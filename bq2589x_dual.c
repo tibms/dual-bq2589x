@@ -1140,6 +1140,7 @@ static void bq2589x_adapter_in_workfunc(struct work_struct *work)
 	if (bq->cfg.enable_absolute_vindpm) {
 		bq2589x_adjust_absolute_vindpm(bq);
 		bq2589x_adjust_absolute_vindpm(g_bq2);
+	}
 
 	schedule_delayed_work(&bq->monitor_work, 0);
 }
