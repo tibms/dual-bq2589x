@@ -1368,8 +1368,11 @@ static void bq2589x_charger1_irq_workfunc(struct work_struct *work)
 	u8 fault = 0;
 	int ret;
 
+	msleep(5);
 	if (!(bq->status & BQ2589X_STATUS_PLUGIN))
 		check_adapter_type(bq);
+	else
+		bq->vbus_type = bq2589x_get_vbus_type(bq);
 
 	/* Read STATUS and FAULT registers */
 	ret = bq2589x_read_byte(bq, &status, BQ2589X_REG_0B);
