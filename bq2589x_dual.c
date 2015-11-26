@@ -588,6 +588,24 @@ int bq2589x_get_hiz_mode(struct bq2589x *bq, u8 *state)
 }
 EXPORT_SYMBOL_GPL(bq2589x_get_hiz_mode);
 
+int bq2589x_enable_ilim_pin(struct bq2589x *bq)
+{
+	u8 val = BQ2589X_ENILIM_ENABLE << BQ2589X_ENILIM_SHIFT;
+
+	return bq2589x_update_bits(bq, BQ2589X_REG_00, BQ2589X_ENILIM_MASK, val);
+
+}
+EXPORT_SYMBOL_GPL(bq2589x_enable_ilim_pin);
+
+int bq2589x_disable_ilim_pin(struct bq2589x *bq)
+{
+	u8 val = BQ2589X_ENILIM_DISABLE << BQ2589X_ENILIM_SHIFT;
+
+	return bq2589x_update_bits(bq, BQ2589X_REG_00, BQ2589X_ENILIM_MASK, val);
+
+}
+EXPORT_SYMBOL_GPL(bq2589x_disable_ilim_pin);
+
 
 int bq2589x_pumpx_enable(struct bq2589x *bq, int enable)
 {
@@ -840,8 +858,11 @@ static int bq2589x_init_device(struct bq2589x *bq)
 		return ret;
 	}
 
+	bq2589x_disable_ilim_pin(bq);
+
+	bq2589x_adc_start(bq, false);
+
 	if (bq == g_bq1) {/* charger 1 specific initialization*/
-		bq2589x_adc_start(bq, false);
 
 		ret = bq2589x_pumpx_enable(bq, 1);
 		if (ret) {
@@ -1045,8 +1066,8 @@ static int bq2589x_parse_dt(struct device *dev, struct bq2589x *bq)
 
 	bq->cfg.enable_auto_dpdm = of_property_read_bool(np, "ti,bq2589x,enable-auto-dpdm");
 	bq->cfg.enable_term = of_property_read_bool(np, "ti,bq2589x,enable-termination");
-	bq->cfg.enable_ico = of_property_read_bool(np, "ti, bq2589x,enable-ico");
-	bq->cfg.enable_absolute_vindpm = of_property_read_bool(np, "ti, bq2589x,use-absolute-vindpm");
+	bq->cfg.enable_ico = of_property_read_bool(np, "ti,bq2589x,enable-ico");
+	bq->cfg.enable_absolute_vindpm = of_property_read_bool(np, "ti,bq2589x,use-absolute-vindpm");
 
 	ret = of_property_read_u32(np, "ti,bq2589x,charge-voltage",&bq->cfg.charge_voltage);
 	if (ret)
@@ -1099,6 +1120,7 @@ static void bq2589x_adjust_absolute_vindpm(struct bq2589x *bq)
 	u16 vindpm_volt;
 	int ret;
 
+	msleep(1000);
 	vbus_volt = bq2589x_adc_read_vbus_volt(bq);
 	if (vbus_volt < 6000)
 		vindpm_volt = vbus_volt - 600;
@@ -1171,8 +1193,7 @@ static void bq2589x_ico_workfunc(struct work_struct *work)
 			schedule_delayed_work(&bq->ico_work, 2 * HZ);
 			return;
 		}
-		if (status & (BQ2589X_VDPM_STAT_MASK | BQ2589X_IDPM_STAT_MASK)) /*VINDPM or IINDPM*/
-			return;
+
 		ret = bq2589x_force_ico(bq);
 		if (ret < 0) {
 			schedule_delayed_work(&bq->ico_work, HZ); /* retry 1 second later*/
@@ -1185,8 +1206,8 @@ static void bq2589x_ico_workfunc(struct work_struct *work)
 	} else {
 		ico_issued = false;
 		ret = bq2589x_check_force_ico_done(bq);
-		if (ret) {/*ico done*/
-			dev_info(bq->dev, "%s:ICO done!\n", __func__);
+//		if (ret) {/*ico done*/
+//			dev_info(bq->dev, "%s:ICO done!\n", __func__);
 			ret = bq2589x_read_byte(bq, &status, BQ2589X_REG_13);
 			if (ret == 0) {
 				curr = (status & BQ2589X_IDPM_LIM_MASK) * BQ2589X_IDPM_LIM_LSB + BQ2589X_IDPM_LIM_BASE;
@@ -1198,7 +1219,7 @@ static void bq2589x_ico_workfunc(struct work_struct *work)
 					dev_info(bq->dev, "%s:Set IINDPM for charger 2:%d successfully\n", __func__, curr);
 
 			}
-		}
+//		}
 		schedule_delayed_work(&bq->charger2_enable_work, 0);
 	}
 }
@@ -1317,6 +1338,8 @@ static void bq2589x_monitor_workfunc(struct work_struct *work)
 {
 	struct bq2589x *bq = container_of(work, struct bq2589x, monitor_work.work);
 	int ret;
+	int chg1_current;
+	int chg2_current;
 
 	dev_info(bq->dev, "%s\n", __func__);
 	bq2589x_reset_watchdog_timer(bq);
@@ -1326,6 +1349,17 @@ static void bq2589x_monitor_workfunc(struct work_struct *work)
 	g_bq1->vbus_volt = bq2589x_adc_read_vbus_volt(g_bq1);
 	g_bq1->vbat_volt = bq2589x_adc_read_battery_volt(g_bq1);
 
+	g_bq2->vbus_volt = bq2589x_adc_read_vbus_volt(g_bq2);
+	g_bq2->vbat_volt = bq2589x_adc_read_battery_volt(g_bq2);
+
+	chg1_current = bq2589x_adc_read_charge_current(g_bq1);
+	chg2_current = bq2589x_adc_read_charge_current(g_bq2);
+
+	dev_info(bq->dev, "%s:charger1:vbus volt:%d,vbat volt:%d,charge current:%d\n",
+		__func__,g_bq1->vbus_volt,g_bq1->vbat_volt,chg1_current);
+
+	dev_info(bq->dev, "%s:charger2:vbus volt:%d,vbat volt:%d,charge current:%d\n",
+		__func__,g_bq2->vbus_volt,g_bq2->vbat_volt,chg2_current);
 
 	if (g_bq2->enabled && g_bq1->rsoc > 95) {
 		ret = bq2589x_enter_hiz_mode(g_bq2);
@@ -1369,6 +1403,7 @@ static void bq2589x_charger1_irq_workfunc(struct work_struct *work)
 	int ret;
 
 	msleep(5);
+
 	if (!(bq->status & BQ2589X_STATUS_PLUGIN))
 		check_adapter_type(bq);
 	else
